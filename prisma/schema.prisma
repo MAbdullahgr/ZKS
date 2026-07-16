@@ -1,0 +1,1160 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================== ENUMS ================================
+
+enum StoreType {
+  retail
+  warehouse
+}
+
+enum UserRole {
+  owner
+  admin
+  manager
+  warehouse
+  cashier
+}
+
+enum PurchaseOrderStatus {
+  draft
+  ordered
+  partial
+  received
+  cancelled
+}
+
+enum SaleStatus {
+  completed
+  pending
+  cancelled
+  returned
+}
+
+enum PaymentMethod {
+  cash
+  card
+  mobile
+  credit
+  khata
+  easypaisa
+  jazzcash
+}
+
+enum KhataTransactionType {
+  credit
+  payment
+  advance
+  return_credit
+  return_cash
+}
+
+enum InventoryAdjustmentType {
+  add
+  remove
+  set
+  damage
+  return
+}
+
+enum ReturnStatus {
+  none
+  partial
+  full
+}
+
+enum RegisterSessionStatus {
+  open
+  closed
+  locked
+}
+
+enum CashTransactionType {
+  cash_in
+  cash_out
+}
+
+enum AttendanceStatus {
+  present
+  absent
+  late
+  half_day
+  leave
+}
+
+enum LeaveRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+enum EmployeeNoteType {
+  general
+  warning
+  appreciation
+  promotion
+  incident
+}
+
+enum InventoryReferenceType {
+  sale
+  purchase
+  return_order
+  adjustment
+  damage
+  initial
+  transfer
+}
+
+enum SupplierLedgerType {
+  credit // We received stock, debt increased
+  payment // We paid them, debt decreased
+  debit // We returned stock to them, debt decreased
+}
+
+enum PayrollStatus {
+  draft
+  pending
+  paid
+}
+
+// DefaultExpenseCategory — the hardcoded enum of expense categories shipped
+// with the app. Renamed from `ExpenseCategory` so the new `ExpenseCategory`
+// MODEL (store-scoped custom categories, see below) can take that name
+// without colliding in the Prisma namespace (models + enums share a
+// namespace). The Postgres TYPE is still `"ExpenseCategory"` — see
+// prisma/migrations/<ts>_add_expense_categories/migration.sql for the
+// `@@map` that preserves the on-disk name.
+enum DefaultExpenseCategory {
+  utilities
+  rent
+  salaries
+  supplies
+  transport
+  maintenance
+  marketing
+  misc
+
+  @@map("DefaultExpenseCategory")
+}
+
+enum StockStatus {
+  in_stock
+  low_stock
+  out_of_stock
+  expired
+}
+
+enum AccountType {
+  asset
+  liability
+  equity
+  revenue
+  expense
+}
+
+enum JournalEntryStatus {
+  draft
+  posted
+  reversed
+}
+
+enum JournalReferenceType {
+  sale
+  sale_return
+  purchase
+  expense
+  payroll
+  supplier_payment
+  khata_payment
+  cash_in
+  cash_out
+  transfer
+  manual
+}
+
+enum StockTransferStatus {
+  draft
+  in_transit
+  received
+  cancelled
+}
+
+// ==================== TAX (FBR-compliant) ====================
+
+enum TaxType {
+  standard // Standard rate (e.g., 17% sales tax)
+  fixed // Fixed-rate retailer (e.g., 4% on retail price)
+  exempt // Exempt goods (e.g., basic food items)
+  zero_rated // Zero-rated (e.g., exports)
+}
+
+model Tax {
+  id          String   @id @default(uuid())
+  storeId     String
+  name        String // e.g., "Standard GST", "Fixed Retailer 4%"
+  rate        Decimal  @db.Decimal(5, 2) // e.g., 17.00 means 17%
+  type        TaxType  @default(standard)
+  fbrCode     String? // FBR tax code for e-invoicing
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([storeId, name])
+  @@index([storeId])
+  @@index([isActive])
+  @@index([type])
+}
+
+// =============================== MODELS ===============================
+
+model Settings {
+  id                  String   @id @default(uuid())
+  code                String   @unique @default("default")
+  storeId             String?  @unique
+  store               Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  storeName           String   @default("ZKS Store")
+  address             String   @default("")
+  phone               String   @default("")
+  currency            String   @default("Rs.")
+  taxRate             Decimal  @default(0) @db.Decimal(5, 2)
+  // FIX: PIN has no default — must be set via the /api/settings/pin endpoint
+  // on first run. The endpoint hashes the PIN with bcrypt before storing.
+  // A plaintext default like "1234" would crash bcrypt.compare() on first use.
+  pin                 String?
+  displayTaxBreakdown Boolean  @default(true)
+  updatedAt           DateTime @updatedAt
+}
+
+model Store {
+  id                   String                @id @default(uuid())
+  name                 String
+  address              String?
+  phone                String?
+  type                 StoreType             @default(retail)
+  isActive             Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  users                User[]
+  sales                Sale[]
+  purchaseOrders       PurchaseOrder[]
+  inventoryAdjustments InventoryAdjustment[]
+  khataTransactions    KhataTransaction[]
+  storeAssignments     StoreAssignment[]
+  registerSessions     RegisterSession[]
+  saleReturns          SaleReturn[]
+  settings             Settings?
+  supplierLedgers      SupplierLedger[]
+  expenses             Expense[]
+  expenseCategories    ExpenseCategory[]
+  taxes                Tax[]
+  categories           Category[]
+  brands               Brand[]
+  suppliers            Supplier[]
+  customers            Customer[]
+  products             Product[]
+  productBatches       ProductBatch[]
+  employees            Employee[]
+  payrolls             Payroll[]
+  attendances          Attendance[]
+  leaveRequests        LeaveRequest[]
+  employeeAdvances     EmployeeAdvance[]
+  employeeNotes        EmployeeNote[]
+  employeeDocuments    EmployeeDocument[]
+  // Accounting
+  accounts             Account[]
+  journalEntries       JournalEntry[]
+  // Stock Transfers
+  sourceTransfers      StockTransfer[]       @relation("SourceTransfers")
+  destTransfers        StockTransfer[]       @relation("DestTransfers")
+
+  @@index([type])
+  @@index([isActive])
+  @@index([name])
+}
+
+model Expense {
+  id          String                 @id @default(uuid())
+  storeId     String
+  date        DateTime               @default(now())
+  amount      Decimal                @db.Decimal(10, 2)
+  category    DefaultExpenseCategory @default(misc)
+  categoryId  String?
+  description String?
+  userId      String?
+  createdAt   DateTime               @default(now())
+
+  store       Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  user        User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  categoryRow ExpenseCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([storeId, date])
+  @@index([category])
+  @@index([categoryId])
+}
+
+// ExpenseCategory — store-scoped custom expense categories. Each store can
+// create its own categories beyond the hardcoded DefaultExpenseCategory enum
+// (utilities, rent, etc.). Expenses can reference EITHER the enum (backward
+// compat for existing rows) OR a row in this table (custom categories).
+//
+// When the expense POST endpoint receives a `categoryId`, it links the
+// Expense to that row; when it receives a `category` enum string, it sets
+// the enum field as before. The UI can mix both.
+model ExpenseCategory {
+  id        String   @id @default(uuid())
+  storeId   String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  expenses Expense[]
+
+  @@unique([storeId, name])
+  @@index([storeId])
+}
+
+// ==================== EMPLOYEE HR ====================
+
+model Employee {
+  id               String    @id @default(uuid())
+  storeId          String
+  employeeCode     String
+  name             String
+  fatherName       String?
+  cnic             String?
+  phone            String?
+  phone2           String?
+  address          String?
+  emergencyName    String?
+  emergencyContact String?
+  dob              DateTime?
+  salary           Decimal   @default(0) @db.Decimal(10, 2)
+  joiningDate      DateTime  @default(now())
+  jobTitle         String    @default("Helper")
+  shift            String?   @default("morning")
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  store       Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  user        User?
+  assignments StoreAssignment[]
+  attendances Attendance[]
+  leaves      LeaveRequest[]
+  advances    EmployeeAdvance[]
+  notes       EmployeeNote[]
+  documents   EmployeeDocument[]
+  payrolls    Payroll[]
+
+  @@unique([storeId, employeeCode])
+  @@unique([storeId, cnic])
+  @@index([storeId])
+  @@index([cnic])
+  @@index([isActive])
+  @@index([jobTitle])
+  @@index([name])
+}
+
+model Payroll {
+  id               String        @id @default(uuid())
+  storeId          String
+  employeeId       String
+  month            Int // 1-12
+  year             Int // e.g., 2024
+  baseSalary       Decimal       @db.Decimal(10, 2)
+  presentDays      Int           @default(0)
+  absentDays       Int           @default(0)
+  leaveDays        Int           @default(0)
+  salaryDeduction  Decimal       @default(0) @db.Decimal(10, 2)
+  advanceDeduction Decimal       @default(0) @db.Decimal(10, 2)
+  bonus            Decimal       @default(0) @db.Decimal(10, 2)
+  netPayable       Decimal       @db.Decimal(10, 2)
+  status           PayrollStatus @default(draft)
+  paidAt           DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, month, year]) // Prevent duplicate payroll generation
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([month, year])
+}
+
+model EmployeeDocument {
+  id         String   @id @default(uuid())
+  employeeId String
+  storeId    String
+  type       String
+  url        String
+  publicId   String?
+  createdAt  DateTime @default(now())
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([type])
+}
+
+model Attendance {
+  id         String           @id @default(uuid())
+  employeeId String
+  storeId    String
+  date       DateTime         @default(now()) @db.Date
+  checkIn    DateTime?
+  checkOut   DateTime?
+  status     AttendanceStatus @default(present)
+  notes      String?
+  createdAt  DateTime         @default(now())
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store      Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([date])
+  @@index([status])
+}
+
+model LeaveRequest {
+  id         String             @id @default(uuid())
+  employeeId String
+  storeId    String
+  type       String
+  startDate  DateTime
+  endDate    DateTime
+  days       Int
+  reason     String?
+  status     LeaveRequestStatus @default(pending)
+  approvedBy String?
+  createdAt  DateTime           @default(now())
+  employee   Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store      Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([status])
+}
+
+model EmployeeAdvance {
+  id         String   @id @default(uuid())
+  employeeId String
+  storeId    String
+  amount     Decimal  @db.Decimal(10, 2)
+  date       DateTime @default(now())
+  reason     String?
+  deducted   Decimal  @default(0) @db.Decimal(10, 2)
+  remaining  Decimal  @default(0) @db.Decimal(10, 2)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([isActive])
+}
+
+model EmployeeNote {
+  id          String           @id @default(uuid())
+  employeeId  String
+  storeId     String
+  type        EmployeeNoteType @default(general)
+  content     String
+  createdById String?
+  createdAt   DateTime         @default(now())
+  employee    Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store       Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  createdBy   User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([type])
+}
+
+// ==================== USER ====================
+
+model User {
+  id                      String    @id @default(uuid())
+  email                   String    @unique
+  passwordHash            String
+  recoveryCodeHash        String?
+  role                    UserRole  @default(cashier)
+  storeId                 String?
+  store                   Store?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  isActive                Boolean   @default(true)
+  mustChangePassword      Boolean   @default(false)
+  // AUDIT-FIX H-1: tokenVersion enables session invalidation. When a user
+  // changes their password, resets via recovery code, has their password
+  // reset by an admin, or changes their PIN, this counter is bumped. All
+  // previously-issued JWTs (which carry the old tokenVersion) are then
+  // rejected by requireAuth — closing the "stolen JWT stays valid for 7
+  // days" hole. Without this, stateless JWTs can't be revoked.
+  tokenVersion            Int       @default(0)
+  // AUDIT-FIX H-29: recoveryCodeGeneratedAt enables recovery-code expiry.
+  // Codes older than 90 days are rejected — long-lived recovery codes are
+  // effectively secondary passwords that never rotate, which is a risk.
+  recoveryCodeGeneratedAt DateTime?
+  lastLogin               DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  employeeId String?   @unique
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  createdById          String?
+  createdBy            User?                 @relation("UserCreator", fields: [createdById], references: [id])
+  createdUsers         User[]                @relation("UserCreator")
+  notesCreated         EmployeeNote[]
+  registerSessions     RegisterSession[]
+  inventoryAdjustments InventoryAdjustment[]
+  expenses             Expense[]
+  postedJournalEntries JournalEntry[]
+  dispatchedTransfers  StockTransfer[]       @relation("DispatchedTransfers")
+  receivedTransfers    StockTransfer[]       @relation("ReceivedTransfers")
+  cancelledTransfers   StockTransfer[]       @relation("CancelledTransfers")
+
+  @@index([storeId])
+  @@index([role])
+  @@index([isActive])
+  @@index([email])
+  @@index([employeeId])
+  @@index([isActive, role])
+}
+
+// ==================== STORE ASSIGNMENT ====================
+
+model StoreAssignment {
+  id         String   @id @default(uuid())
+  employeeId String
+  storeId    String
+  role       UserRole @default(cashier)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  store    Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, storeId])
+  @@index([employeeId])
+  @@index([storeId])
+  @@index([isActive])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  storeId    String?
+  action     String
+  entityType String?
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([storeId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  // INFRA: Composite index for filtered audit log queries (store + action + date)
+  @@index([storeId, action, createdAt])
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  storeId     String
+  name        String
+  description String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products    Product[]
+
+  @@unique([storeId, name])
+  @@index([storeId])
+  @@index([name])
+  @@index([isActive])
+}
+
+model Supplier {
+  id             String           @id @default(uuid())
+  storeId        String
+  name           String
+  contactPerson  String?
+  email          String?
+  phone          String?
+  address        String?
+  balance        Decimal          @default(0) @db.Decimal(12, 2)
+  isActive       Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  store          Store            @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  products       Product[]
+  purchaseOrders PurchaseOrder[]
+  ledgerEntries  SupplierLedger[]
+
+  @@index([storeId])
+  @@index([name])
+  @@index([phone])
+  @@index([isActive])
+  @@index([email])
+}
+
+model Customer {
+  id                String             @id @default(uuid())
+  storeId           String
+  name              String
+  phone             String?
+  email             String?
+  address           String?
+  balance           Decimal            @default(0) @db.Decimal(12, 2)
+  creditLimit       Decimal            @default(0) @db.Decimal(12, 2)
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  store             Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sales             Sale[]
+  khataTransactions KhataTransaction[]
+
+  @@unique([storeId, phone])
+  @@index([storeId])
+  @@index([name])
+  @@index([phone])
+  @@index([balance])
+  @@index([isActive])
+  @@index([creditLimit])
+  @@index([email])
+}
+
+model SupplierLedger {
+  id              String             @id @default(uuid())
+  supplierId      String
+  storeId         String
+  type            SupplierLedgerType
+  amount          Decimal            @db.Decimal(12, 2)
+  balanceAfter    Decimal            @db.Decimal(12, 2)
+  note            String?
+  purchaseOrderId String?
+  createdAt       DateTime           @default(now())
+
+  supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([storeId])
+  @@index([createdAt])
+  @@index([purchaseOrderId])
+}
+
+model Product {
+  id               String                @id @default(uuid())
+  storeId          String
+  name             String
+  sku              String
+  barcode          String?
+  description      String?
+  categoryId       String?
+  supplierId       String?
+  costPrice        Decimal               @db.Decimal(10, 2)
+  sellingPrice     Decimal               @db.Decimal(10, 2)
+  isReturnable     Boolean               @default(true)
+  stockQuantity    Decimal               @default(0) @db.Decimal(10, 3)
+  minStockLevel    Decimal               @default(10) @db.Decimal(10, 3)
+  unit             String                @default("pieces")
+  parentUnit       String?
+  unitsPerParent   Int?                  @default(1)
+  productGroup     String?
+  variantName      String?
+  isActive         Boolean               @default(true)
+  brandId          String?
+  taxId            String?
+  imageUrl         String?
+  isLoose          Boolean               @default(false)
+  createdAt        DateTime              @default(now())
+  baseUnit         String                @default("piece")
+  updatedAt        DateTime              @updatedAt
+  store            Store                 @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  category         Category?             @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  supplier         Supplier?             @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  saleItems        SaleItem[]            @relation("ProductSaleItem")
+  variantSaleItems SaleItem[]            @relation("VariantSaleItem")
+  brand            Brand?                @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  tax              Tax?                  @relation(fields: [taxId], references: [id], onDelete: SetNull)
+  purchaseItems    PurchaseOrderItem[]
+  adjustments      InventoryAdjustment[]
+  returnItems      SaleReturnItem[]
+  batches          ProductBatch[]
+
+  @@unique([storeId, sku])
+  @@unique([storeId, barcode])
+  @@index([storeId])
+  @@index([categoryId])
+  @@index([supplierId])
+  // FIX P2-1: Add missing index on brandId — used in product queries filtering by brand.
+  @@index([brandId])
+  @@index([barcode])
+  @@index([sku])
+  @@index([isActive])
+  @@index([name])
+  @@index([productGroup])
+  @@index([name, isActive])
+  @@index([taxId])
+}
+
+model Brand {
+  id       String    @id @default(uuid())
+  storeId  String
+  name     String
+  isActive Boolean   @default(true)
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([storeId, name])
+  @@index([storeId])
+}
+
+model ProductBatch {
+  id          String    @id @default(uuid())
+  productId   String
+  storeId     String
+  batchNumber String?
+  expiryDate  DateTime?
+  quantity    Decimal   @db.Decimal(10, 3)
+  costPrice   Decimal   @db.Decimal(10, 2)
+  createdAt   DateTime  @default(now())
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  @@index([productId])
+  @@index([storeId])
+  @@index([expiryDate])
+}
+
+model PurchaseOrder {
+  id            String              @id @default(uuid())
+  storeId       String
+  supplierId    String
+  orderNumber   String              @unique
+  orderDate     DateTime            @default(now())
+  expectedDate  DateTime?
+  receivedDate  DateTime?
+  totalAmount   Decimal             @default(0) @db.Decimal(12, 2)
+  status        PurchaseOrderStatus @default(draft)
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  store         Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  supplier      Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  items         PurchaseOrderItem[]
+  ledgerEntries SupplierLedger[]
+
+  @@index([storeId])
+  @@index([supplierId])
+  @@index([status])
+  @@index([orderDate])
+  @@index([storeId, status])
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  productId       String
+  quantity        Decimal       @db.Decimal(10, 3)
+  receivedQty     Decimal       @default(0) @db.Decimal(10, 3)
+  unitCost        Decimal       @db.Decimal(10, 2)
+  total           Decimal       @db.Decimal(12, 2)
+  createdAt       DateTime      @default(now())
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+  @@index([purchaseOrderId, productId])
+}
+
+model Sale {
+  id                String             @id @default(uuid())
+  storeId           String
+  saleNumber        String             @unique
+  customerId        String?
+  customerName      String?
+  idempotencyKey    String?            @unique
+  returnStatus      ReturnStatus       @default(none)
+  saleDate          DateTime           @default(now())
+  status            SaleStatus         @default(completed)
+  subtotal          Decimal            @db.Decimal(12, 2)
+  tax               Decimal            @default(0) @db.Decimal(12, 2)
+  discount          Decimal            @default(0) @db.Decimal(12, 2)
+  total             Decimal            @db.Decimal(12, 2)
+  paidAmount        Decimal            @default(0) @db.Decimal(12, 2)
+  paymentMethod     PaymentMethod      @default(cash)
+  taxInvoiceNumber  String?            @unique
+  // FBR-issued invoice number (returned by FBR API after successful submission).
+  // Null until FBR integration is configured + submission succeeds.
+  fbrInvoiceNumber  String?
+  // AUDIT-FIX: FBR QR code (base64) returned by FBR API — printed on receipt
+  // so customers can verify the invoice on the FBR portal.
+  fbrQrCode         String?
+  // Snapshot of the store-level tax rate at time of sale (for audit)
+  taxRateSnapshot   Decimal            @default(0) @db.Decimal(5, 2)
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  store             Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  customer          Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  registerSessionId String?
+  registerSession   RegisterSession?   @relation(fields: [registerSessionId], references: [id], onDelete: SetNull)
+  items             SaleItem[]
+  khataTransactions KhataTransaction[]
+  returns           SaleReturn[]
+  payments          SalePayment[]
+
+  @@index([storeId])
+  @@index([customerId])
+  @@index([saleDate])
+  @@index([status])
+  @@index([saleNumber])
+  @@index([storeId, saleDate])
+  @@index([registerSessionId])
+  @@index([storeId, status, saleDate])
+}
+
+model SaleItem {
+  id          String           @id @default(uuid())
+  saleId      String
+  productId   String
+  quantity    Decimal          @db.Decimal(10, 3)
+  unitPrice   Decimal          @db.Decimal(10, 2)
+  // Item-level discount (flat amount in Rs., applied to this line only)
+  discount    Decimal          @default(0) @db.Decimal(10, 2)
+  costPrice   Decimal          @default(0.0) @db.Decimal(10, 2)
+  // Tax rate snapshot at time of sale (from Product.tax.rate or Settings.taxRate)
+  taxRate     Decimal          @default(0) @db.Decimal(5, 2)
+  // Tax amount for this line = (unitPrice * qty - discount) * taxRate / 100
+  taxAmount   Decimal          @default(0) @db.Decimal(12, 2)
+  // Line total AFTER discount, BEFORE tax (tax is tracked separately on the Sale)
+  total       Decimal          @db.Decimal(12, 2)
+  profit      Decimal          @default(0.0) @db.Decimal(10, 2)
+  // AUDIT-FIX (5-a #3): returnedQty must be Decimal(10,3) to match `quantity`
+  // — without this, returning weighed goods (1.5 kg of rice) fails because the
+  // increment of a fractional value into an Int column throws. Was Int.
+  returnedQty Decimal          @default(0) @db.Decimal(10, 3)
+  note        String?
+  variantId   String?
+  sale        Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product          @relation("ProductSaleItem", fields: [productId], references: [id], onDelete: Restrict)
+  variant     Product?         @relation("VariantSaleItem", fields: [variantId], references: [id], onDelete: SetNull)
+  returnItems SaleReturnItem[]
+
+  @@index([saleId])
+  @@index([productId])
+  @@index([saleId, productId])
+}
+
+model SaleReturn {
+  id                String             @id @default(uuid())
+  storeId           String
+  store             Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  saleId            String
+  returnNumber      String             @unique
+  returnDate        DateTime           @default(now())
+  total             Decimal            @db.Decimal(12, 2)
+  reason            String?
+  // AUDIT-FIX (5-a #7): Idempotency key so a client retry (network timeout
+  // after the server committed the return) can't create a duplicate SaleReturn
+  // — which would double-refund the customer and double-restore stock. Scoped
+  // per-store via @@unique([storeId, idempotencyKey]) so two stores can reuse
+  // the same client-generated key without colliding.
+  idempotencyKey    String?
+  createdAt         DateTime           @default(now())
+  sale              Sale               @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  items             SaleReturnItem[]
+  khataTransactions KhataTransaction[]
+
+  @@unique([storeId, idempotencyKey])
+  @@index([storeId])
+  @@index([saleId])
+  @@index([returnDate])
+  @@index([returnNumber])
+  @@index([storeId, returnDate])
+}
+
+model SaleReturnItem {
+  id           String     @id @default(uuid())
+  saleReturnId String
+  saleItemId   String
+  productId    String
+  quantity     Decimal    @db.Decimal(10, 3)
+  unitPrice    Decimal    @db.Decimal(10, 2)
+  total        Decimal    @db.Decimal(12, 2)
+  saleReturn   SaleReturn @relation(fields: [saleReturnId], references: [id], onDelete: Cascade)
+  saleItem     SaleItem   @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([saleReturnId])
+  @@index([saleItemId])
+  @@index([productId])
+}
+
+model SalePayment {
+  id        String        @id @default(uuid())
+  saleId    String
+  sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(12, 2)
+  createdAt DateTime      @default(now())
+
+  @@index([saleId])
+  // FIX: Add composite index for fast reporting by payment method
+  @@index([saleId, method])
+}
+
+model KhataTransaction {
+  id           String               @id @default(uuid())
+  storeId      String
+  customerId   String
+  type         KhataTransactionType
+  amount       Decimal              @db.Decimal(12, 2)
+  balanceAfter Decimal              @db.Decimal(12, 2)
+  note         String?
+  saleId       String?
+  saleReturnId String?
+  createdAt    DateTime             @default(now())
+  store        Store                @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  customer     Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  sale         Sale?                @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  saleReturn   SaleReturn?          @relation(fields: [saleReturnId], references: [id], onDelete: SetNull)
+
+  @@index([storeId])
+  @@index([customerId])
+  @@index([createdAt])
+  @@index([saleId])
+  @@index([saleReturnId])
+  @@index([customerId, createdAt])
+  // INFRA: Composite index for customer statements (store + customer + date)
+  @@index([storeId, customerId, createdAt])
+}
+
+model InventoryAdjustment {
+  id            String                  @id @default(uuid())
+  storeId       String
+  productId     String
+  type          InventoryAdjustmentType
+  quantity      Decimal                 @db.Decimal(10, 3)
+  previousStock Decimal                 @db.Decimal(10, 3)
+  newStock      Decimal                 @db.Decimal(10, 3)
+  reason        String?
+  referenceType InventoryReferenceType?
+  referenceId   String?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  store         Store                   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  product       Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  userId        String?
+  user          User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([storeId])
+  @@index([productId])
+  @@index([createdAt])
+  @@index([referenceType, referenceId])
+  @@index([userId])
+  // INFRA: Composite index for stock movement history (store + product + date)
+  @@index([storeId, productId, createdAt])
+}
+
+model RegisterSession {
+  id           String                @id @default(uuid())
+  storeId      String
+  userId       String
+  openingCash  Decimal               @db.Decimal(10, 2)
+  closingCash  Decimal?              @db.Decimal(10, 2)
+  cashInTotal  Decimal               @default(0) @db.Decimal(10, 2)
+  cashOutTotal Decimal               @default(0) @db.Decimal(10, 2)
+  openingNote  String?
+  closingNote  String?
+  status       RegisterSessionStatus @default(open)
+  openedAt     DateTime              @default(now())
+  closedAt     DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  store        Store             @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  user         User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  transactions CashTransaction[]
+  sales        Sale[]
+
+  @@index([userId, status])
+  @@index([storeId, status])
+  @@index([openedAt])
+}
+
+model CashTransaction {
+  id        String              @id @default(uuid())
+  sessionId String
+  session   RegisterSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type      CashTransactionType
+  amount    Decimal             @db.Decimal(10, 2)
+  reason    String
+  createdAt DateTime            @default(now())
+
+  @@index([sessionId])
+  @@index([sessionId, type])
+}
+
+// ==================== ACCOUNTING (Double-Entry Bookkeeping) ====================
+
+model Account {
+  id             String      @id @default(uuid())
+  storeId        String
+  code           String // e.g., "1000", "4000"
+  name           String // e.g., "Cash on Hand", "Sales Revenue"
+  type           AccountType
+  parentId       String? // For hierarchy: 1000 → 1100 → 1110
+  parent         Account?    @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Account[]   @relation("AccountHierarchy")
+  isSystem       Boolean     @default(false) // System accounts can't be deleted
+  isActive       Boolean     @default(true)
+  openingBalance Decimal     @default(0) @db.Decimal(14, 2) // Signed: + for debit-normal, - for credit-normal
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  store        Store         @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  journalLines JournalLine[]
+
+  @@unique([storeId, code])
+  @@index([storeId])
+  @@index([type])
+  @@index([parentId])
+  @@index([isActive])
+}
+
+model JournalEntry {
+  id            String               @id @default(uuid())
+  storeId       String
+  entryNumber   String // e.g., "JE-2026-0001"
+  entryDate     DateTime
+  description   String
+  referenceType JournalReferenceType @default(manual)
+  referenceId   String? // FK to source record (Sale, Expense, etc.)
+  status        JournalEntryStatus   @default(posted)
+  postedById    String?
+  postedAt      DateTime?
+  reversalOfId  String? // If this entry reverses another, that entry's ID
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  store      Store         @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  postedBy   User?         @relation(fields: [postedById], references: [id], onDelete: SetNull)
+  lines      JournalLine[]
+  // Self-relation for reversals. ONLY the owning side (reversalOf) specifies
+  // fields/references/onDelete. The inverse side (reversedBy) is a virtual
+  // lookup — Prisma populates it automatically. One FK field, two access
+  // directions. @unique on reversalOfId makes this a 1-to-1 (an entry can
+  // be reversed by at most one other entry).
+  reversalOf JournalEntry? @relation("JournalReversal", fields: [reversalOfId], references: [id], onDelete: SetNull)
+  reversedBy JournalEntry? @relation("JournalReversal")
+
+  @@unique([storeId, entryNumber])
+  @@unique([reversalOfId])
+  @@index([storeId])
+  @@index([entryDate])
+  @@index([referenceType, referenceId])
+  @@index([status])
+  // INFRA: Composite index for backfill jeExists checks (store + ref type/id)
+  @@index([storeId, referenceType, referenceId])
+}
+
+model JournalLine {
+  id             String   @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  debit          Decimal  @default(0) @db.Decimal(14, 2)
+  credit         Decimal  @default(0) @db.Decimal(14, 2)
+  description    String?
+  createdAt      DateTime @default(now())
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account      Account      @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([accountId, journalEntryId])
+}
+
+// ==================== STOCK TRANSFERS (Inter-Store) ====================
+
+model StockTransfer {
+  id             String              @id @default(uuid())
+  transferNumber String              @unique
+  sourceStoreId  String
+  destStoreId    String
+  status         StockTransferStatus @default(draft)
+  notes          String?
+  dispatchedById String?
+  dispatchedAt   DateTime?
+  receivedById   String?
+  receivedAt     DateTime?
+  cancelledById  String?
+  settledAt      DateTime? // when inter-store balances were settled (source store)
+  // AUDIT-FIX (5-c #4): dest-side settlement timestamp. Previously only the
+  // source store marked settledAt, so the dest store could re-find the same
+  // received+unsettled transfers and post DUPLICATE settlement JEs. Now both
+  // sides track independently — a transfer is fully settled only when BOTH
+  // settledAt and destSettledAt are non-null.
+  destSettledAt  DateTime?
+  totalValue     Decimal             @default(0) @db.Decimal(12, 2)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  sourceStore  Store @relation("SourceTransfers", fields: [sourceStoreId], references: [id], onDelete: Restrict)
+  destStore    Store @relation("DestTransfers", fields: [destStoreId], references: [id], onDelete: Restrict)
+  dispatchedBy User? @relation("DispatchedTransfers", fields: [dispatchedById], references: [id], onDelete: SetNull)
+  receivedBy   User? @relation("ReceivedTransfers", fields: [receivedById], references: [id], onDelete: SetNull)
+  cancelledBy  User? @relation("CancelledTransfers", fields: [cancelledById], references: [id], onDelete: SetNull)
+
+  items StockTransferItem[]
+
+  @@index([sourceStoreId])
+  @@index([destStoreId])
+  @@index([status])
+  @@index([createdAt])
+  // AUDIT-FIX: Index for settleTransfers query (WHERE settledAt IS NULL AND status='received')
+  @@index([settledAt])
+  @@index([status, settledAt])
+}
+
+model StockTransferItem {
+  id          String  @id @default(uuid())
+  transferId  String
+  productId   String
+  productName String
+  productSku  String
+  quantity    Decimal @db.Decimal(10, 3)
+  unitCost    Decimal @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(12, 2)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  @@index([transferId])
+  @@index([productId])
+}

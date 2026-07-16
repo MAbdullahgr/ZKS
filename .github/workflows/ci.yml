@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # This adds the fake database environment variable globally for all steps in this job
+    env:
+      DATABASE_URL: "postgresql://johndoe:randompassword@localhost:5432/mydb?schema=public"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v1
+        with:
+          npm-version: latest
+      - run: npm install
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
